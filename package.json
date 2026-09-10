@@ -1,0 +1,25 @@
+{
+  "name": "strands-kamada-hono",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:dry": "wrangler deploy --dry-run",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agentcore": "^3.1126.0",
+    "better-auth": "^1.7.2",
+    "hono": "^4.13.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0",
+    "wrangler": "^4.129.0"
+  }
+}

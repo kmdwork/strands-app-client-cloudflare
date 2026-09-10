@@ -1,0 +1,5 @@
+# Copy this file to .dev.vars and enter local development credentials.
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AGENTCORE_RUNTIME_ARN=
+BETTER_AUTH_SECRET=
