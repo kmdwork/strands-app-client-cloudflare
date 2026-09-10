@@ -63,16 +63,44 @@ curl -i -c cookies.txt -X POST http://localhost:8787/api/auth/sign-in/email \
 保存したCookieを使って、新しいAgentCoreセッションを開始します。
 
 ```bash
-curl -b cookies.txt -X POST http://localhost:8787/api/chat \
+curl -N -b cookies.txt -X POST http://localhost:8787/api/chat \
   -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
   -d '{"message":"Knowledge Baseを検索して、営業時間について教えてください"}'
 ```
 
-レスポンスの `sessionId` を次のリクエストでも指定すると、同じAgentCoreセッションを継続できます。
+`POST /api/chat` の成功レスポンスはSSE（`text/event-stream`）です。ブラウザは
+`fetch()` と `ReadableStream` で増分処理し、回答全文の完成を待たずに同じ
+Assistantメッセージを更新します。`session` イベントの `sessionId` を次の
+リクエストでも指定すると、同じAgentCoreセッションを継続できます。
+
+downstream SSEイベントは `session`、`delta`、`metadata`、`image`、`done` です。
+
+~~~text
+event: session
+data: {"sessionId":"..."}
+
+event: delta
+data: {"text":"回答の一部"}
+
+event: metadata
+data: {"usage":{"inputTokens":1,"outputTokens":2,"totalTokens":3},"latencyMs":123}
+
+event: image
+data: {"mediaType":"image/png","data":"Base64エンコードした画像データ"}
+
+event: done
+data: {}
+~~~
+
+ストリーム開始後の失敗は、可能な範囲で `error` イベントとして返します。
+認証・Content-Type・本文サイズ・入力形式のエラーは、ストリーム開始前の
+HTTP 4xx JSONレスポンスです。
 
 ```bash
-curl -b cookies.txt -X POST http://localhost:8787/api/chat \
+curl -N -b cookies.txt -X POST http://localhost:8787/api/chat \
   -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
   -d '{"message":"もう少し詳しく教えてください","sessionId":"前回返されたsessionId"}'
 ```
 
@@ -103,7 +131,10 @@ AgentCore Runtimeには、接続先の `MyAgent/main.py` が定義する `prompt
 }
 ```
 
-RuntimeからはJSON文字列、または `message`、`response`、`result`、`output` のいずれかにテキストを持つJSONオブジェクトを返してください。画像を返す場合は次のいずれかを使用できます。
+Runtimeは `text/event-stream` でStrandsイベントを返します。
+`contentBlockDelta.delta.text` はブラウザ向けの `delta` イベントへ変換され、
+usage・latencyと画像もそれぞれ `metadata`・`image` イベントとして中継されます。
+画像を返す場合は、イベントデータに次の形式を使用できます。
 
 ```json
 {
@@ -122,8 +153,8 @@ http://localhost:8787/
 
 ## Current limitations
 
-- レスポンスはAgentCoreのストリームを最後まで収集してからJSONで返します。
 - Rate LimitとDurable Objectによるセッション所有権管理は未実装です。
+- Base64画像はSSEイベントとして送るため、テキストだけのイベントよりサイズが大きくなります。
 - `sessionId` は一時的にクライアントへ公開しています。
 - 新規ユーザー登録、メールアドレスによる本人確認、パスワードリセットは無効です。
 

@@ -112,8 +112,11 @@ export async function invokeRuntimeStream(
     const close = async (): Promise<void> => {
       if (closed) return;
       closed = true;
-      await cancelRuntimeBody(body);
-      client.destroy();
+      try {
+        await cancelRuntimeBody(body);
+      } finally {
+        client.destroy();
+      }
     };
 
     return {

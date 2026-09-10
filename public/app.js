@@ -146,31 +146,45 @@ function appendMessage(role, content, images = []) {
   author.textContent = role === "assistant" ? "Assistant" : "You";
   body.append(author);
 
+  const contentElement = document.createElement("div");
+  contentElement.className = "message-content";
   if (role === "assistant") {
-    appendAssistantContent(body, content);
+    appendAssistantContent(contentElement, content);
   } else {
     const paragraph = document.createElement("p");
     paragraph.textContent = content;
-    body.append(paragraph);
+    contentElement.append(paragraph);
   }
+  body.append(contentElement);
+  article.append(avatar, body);
 
   for (const image of images) {
-    const element = document.createElement("img");
-    element.className = "message-image";
-    element.src = `data:${image.mediaType};base64,${image.data}`;
-    element.alt = role === "assistant" ? "Assistantが生成した画像" : "添付画像";
-    body.append(element);
+    appendMessageImage(article, role, image);
   }
 
-  article.append(avatar, body);
   messageList.append(article);
   article.scrollIntoView({ behavior: "smooth", block: "end" });
   return article;
 }
 
+function renderAssistantMessage(article, content) {
+  const contentElement = article.querySelector(".message-content");
+  contentElement.replaceChildren();
+  appendAssistantContent(contentElement, content);
+  article.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+function appendMessageImage(article, role, image) {
+  const element = document.createElement("img");
+  element.className = "message-image";
+  element.src = `data:${image.mediaType};base64,${image.data}`;
+  element.alt = role === "assistant" ? "Assistantが生成した画像" : "添付画像";
+  article.querySelector(".message-body").append(element);
+}
+
 function appendTypingIndicator() {
   const article = appendMessage("assistant", "");
-  const body = article.querySelector(".message-body");
+  const body = article.querySelector(".message-content");
   const dots = document.createElement("div");
   dots.className = "typing-dots";
   dots.setAttribute("aria-label", "回答を生成中");
@@ -279,25 +293,48 @@ chatForm.addEventListener("submit", async (event) => {
       body.sessionId = runtimeSessionId;
     }
 
-    const result = await requestJson("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    let assistantText = "";
+    const removeTypingDots = () => {
+      typingIndicator.querySelector(".typing-dots")?.remove();
+    };
 
-    runtimeSessionId = result.sessionId;
-    typingIndicator.remove();
-    appendMessage("assistant", result.message, result.images ?? []);
+    await streamChat(body, {
+      session(data) {
+        runtimeSessionId = data.sessionId;
+      },
+      delta(data) {
+        removeTypingDots();
+        assistantText += data.text;
+        renderAssistantMessage(typingIndicator, assistantText);
+      },
+      image(data) {
+        removeTypingDots();
+        appendMessageImage(typingIndicator, "assistant", data);
+      },
+      metadata(data) {
+        typingIndicator.dataset.metadata = JSON.stringify(data);
+      },
+      done() {
+        removeTypingDots();
+      },
+    });
   } catch (error) {
-    typingIndicator.remove();
+    const hasResponseContent =
+      typingIndicator.querySelector(".message-content")?.textContent.length > 0 ||
+      typingIndicator.querySelector(".message-image") !== null;
+    typingIndicator.querySelector(".typing-dots")?.remove();
     if (error.status === 401) {
+      typingIndicator.remove();
       showLogin("セッションの有効期限が切れました。もう一度ログインしてください。");
       return;
     }
-    appendMessage(
-      "assistant",
-      "回答を取得できませんでした。少し時間をおいて、もう一度お試しください。",
-    );
+    const errorMessage =
+      "回答を取得できませんでした。少し時間をおいて、もう一度お試しください。";
+    if (hasResponseContent) {
+      appendMessage("assistant", errorMessage);
+    } else {
+      renderAssistantMessage(typingIndicator, errorMessage);
+    }
   } finally {
     setChatPending(false);
     if (!chatView.hidden) messageInput.focus();
@@ -366,3 +403,4 @@ async function initialize() {
 }
 
 initialize();
+import { streamChat } from "./chat-stream.js";
