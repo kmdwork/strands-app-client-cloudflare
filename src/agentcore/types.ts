@@ -23,6 +23,18 @@ export interface InvokeRuntimeResult {
   latencyMs?: number;
 }
 
+export type RuntimeStreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "image"; image: RuntimeImage }
+  | { type: "metadata"; usage?: RuntimeUsage; latencyMs?: number }
+  | { type: "done" };
+
+export interface InvokeRuntimeStreamResult {
+  sessionId: string;
+  events: AsyncIterable<RuntimeStreamEvent>;
+  close: () => Promise<void>;
+}
+
 export interface RuntimeUsage {
   inputTokens?: number;
   outputTokens?: number;

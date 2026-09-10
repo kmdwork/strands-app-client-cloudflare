@@ -3,10 +3,14 @@ import { createAgentCoreClient } from "./client";
 import type {
   InvokeRuntimeInput,
   InvokeRuntimeResult,
+  InvokeRuntimeStreamResult,
   RuntimeImage,
+  RuntimeStreamEvent,
+  RuntimeUsage,
 } from "./types";
 
 const JSON_CONTENT_TYPE = "application/json";
+const SSE_CONTENT_TYPE = "text/event-stream";
 
 export class AgentCoreInvocationError extends Error {
   readonly causeName: string;
@@ -22,6 +26,41 @@ export async function invokeRuntime(
   env: Env,
   input: InvokeRuntimeInput,
 ): Promise<InvokeRuntimeResult> {
+  const stream = await invokeRuntimeStream(env, input);
+  const textParts: string[] = [];
+  const images: RuntimeImage[] = [];
+  let usage: RuntimeUsage | undefined;
+  let latencyMs: number | undefined;
+
+  for await (const event of stream.events) {
+    if (event.type === "delta") textParts.push(event.text);
+    if (event.type === "image") images.push(event.image);
+    if (event.type === "metadata") {
+      usage = event.usage ?? usage;
+      latencyMs = event.latencyMs ?? latencyMs;
+    }
+  }
+
+  if (textParts.length === 0) {
+    throw new AgentCoreInvocationError(
+      "AgentCore Runtime response did not include a text message",
+    );
+  }
+
+  return {
+    message: textParts.join(""),
+    sessionId: stream.sessionId,
+    ...(images.length === 0 ? {} : { images }),
+    ...(usage === undefined ? {} : { usage }),
+    ...(latencyMs === undefined ? {} : { latencyMs }),
+  };
+}
+
+export async function invokeRuntimeStream(
+  env: Env,
+  input: InvokeRuntimeInput,
+  options: { abortSignal?: AbortSignal } = {},
+): Promise<InvokeRuntimeStreamResult> {
   const client = createAgentCoreClient(env);
   const payload = {
     prompt: input.message,
@@ -46,14 +85,11 @@ export async function invokeRuntime(
         runtimeSessionId: input.sessionId,
         runtimeUserId: input.actorId,
         contentType: JSON_CONTENT_TYPE,
-        accept: JSON_CONTENT_TYPE,
+        accept: SSE_CONTENT_TYPE,
         payload: new TextEncoder().encode(JSON.stringify(payload)),
       }),
+      { abortSignal: options.abortSignal },
     );
-
-    if (response.response === undefined) {
-      throw new AgentCoreInvocationError("AgentCore Runtime returned no response");
-    }
 
     if (response.statusCode !== undefined && response.statusCode >= 400) {
       throw new AgentCoreInvocationError(
@@ -61,127 +97,198 @@ export async function invokeRuntime(
       );
     }
 
-    const rawBody = await response.response.transformToString();
-    const result = parseRuntimeResponse(rawBody, response.contentType);
+    if (!response.contentType?.toLowerCase().includes(SSE_CONTENT_TYPE)) {
+      throw new AgentCoreInvocationError(
+        `AgentCore Runtime returned unsupported content type: ${response.contentType ?? "missing"}`,
+      );
+    }
+
+    if (response.response === undefined) {
+      throw new AgentCoreInvocationError("AgentCore Runtime returned no response");
+    }
+
+    const body = response.response;
+    let closed = false;
+    const close = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      await cancelRuntimeBody(body);
+      client.destroy();
+    };
 
     return {
-      ...result,
       sessionId: response.runtimeSessionId ?? input.sessionId,
+      events: parseRuntimeEventStream(readRuntimeBody(body), close),
+      close,
     };
   } catch (error) {
+    client.destroy();
     if (error instanceof AgentCoreInvocationError) {
       throw error;
     }
-
     throw new AgentCoreInvocationError("Failed to invoke AgentCore Runtime", error);
-  } finally {
-    client.destroy();
   }
 }
 
-export function parseRuntimeResponse(
-  rawBody: string,
-  contentType?: string,
-): Omit<InvokeRuntimeResult, "sessionId"> {
-  const normalizedBody = contentType?.includes("text/event-stream")
-    ? parseServerSentEvents(rawBody)
-    : rawBody.trim();
+export async function* parseRuntimeEventStream(
+  chunks: AsyncIterable<Uint8Array | string>,
+  cleanup: () => void | Promise<void> = () => {},
+): AsyncGenerator<RuntimeStreamEvent> {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let doneEmitted = false;
 
-  if (normalizedBody.length === 0) {
-    throw new AgentCoreInvocationError("AgentCore Runtime returned an empty response");
-  }
+  const decode = (chunk: Uint8Array | string): string =>
+    typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
 
   try {
-    return normalizeJsonResponse(JSON.parse(normalizedBody));
-  } catch (error) {
-    if (error instanceof AgentCoreInvocationError) {
-      throw error;
+    for await (const chunk of chunks) {
+      buffer += decode(chunk);
+      let boundary = findEventBoundary(buffer);
+      while (boundary !== undefined) {
+        const frame = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary.length);
+        for (const event of normalizeSseFrame(frame)) {
+          yield event;
+          if (event.type === "done") {
+            doneEmitted = true;
+            return;
+          }
+        }
+        boundary = findEventBoundary(buffer);
+      }
     }
-    return { message: normalizedBody };
+
+    buffer += decoder.decode();
+    if (buffer.length > 0) {
+      for (const event of normalizeSseFrame(buffer)) {
+        yield event;
+        if (event.type === "done") doneEmitted = true;
+      }
+    }
+
+    if (!doneEmitted) yield { type: "done" };
+  } finally {
+    await cleanup();
   }
 }
 
-function parseServerSentEvents(body: string): string {
-  const events = body
+function findEventBoundary(value: string): { index: number; length: number } | undefined {
+  const match = /\r?\n\r?\n/.exec(value);
+  return match === null ? undefined : { index: match.index, length: match[0].length };
+}
+
+function normalizeSseFrame(frame: string): RuntimeStreamEvent[] {
+  const data = frame
     .split(/\r?\n/)
     .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .filter((line) => line !== "[DONE]");
+    .map((line) => line.slice(5).replace(/^ /, ""))
+    .join("\n");
 
-  const textParts: string[] = [];
-  let usage: unknown;
-  let latencyMs: unknown;
+  if (data.length === 0) return [];
+  if (data.trim() === "[DONE]") return [{ type: "done" }];
 
-  for (const data of events) {
-    try {
-      const value: unknown = JSON.parse(data);
-      if (typeof value === "string") {
-        textParts.push(value);
-        continue;
-      }
-      if (!isRecord(value)) continue;
+  try {
+    return normalizeStreamValue(JSON.parse(data));
+  } catch {
+    // Ignore only the malformed frame; subsequent independent SSE events remain usable.
+    return [];
+  }
+}
 
-      const event = isRecord(value.event) ? value.event : value;
-      const contentBlockDelta = isRecord(event.contentBlockDelta)
-        ? event.contentBlockDelta
-        : undefined;
-      const delta = isRecord(contentBlockDelta?.delta)
-        ? contentBlockDelta.delta
-        : undefined;
-      if (typeof delta?.text === "string") {
-        textParts.push(delta.text);
-      }
+function normalizeStreamValue(value: unknown): RuntimeStreamEvent[] {
+  if (typeof value === "string") return [{ type: "delta", text: value }];
+  if (!isRecord(value)) return [];
 
-      const directText = [value.message, value.response, value.result, value.output].find(
-        (candidate): candidate is string => typeof candidate === "string",
-      );
-      if (directText !== undefined) textParts.push(directText);
+  const event = isRecord(value.event) ? value.event : value;
+  const contentBlockDelta = isRecord(event.contentBlockDelta)
+    ? event.contentBlockDelta
+    : undefined;
+  const delta = isRecord(contentBlockDelta?.delta)
+    ? contentBlockDelta.delta
+    : undefined;
+  const result: RuntimeStreamEvent[] = [];
 
-      const metadata = isRecord(event.metadata) ? event.metadata : undefined;
-      if (metadata?.usage !== undefined) usage = metadata.usage;
-      const metrics = isRecord(metadata?.metrics) ? metadata.metrics : undefined;
-      if (typeof metrics?.latencyMs === "number") latencyMs = metrics.latencyMs;
-    } catch {
-      textParts.push(data);
+  if (typeof delta?.text === "string") {
+    result.push({ type: "delta", text: delta.text });
+  } else {
+    const directText = [value.message, value.response, value.result, value.output].find(
+      (candidate): candidate is string => typeof candidate === "string",
+    );
+    if (directText !== undefined) result.push({ type: "delta", text: directText });
+  }
+
+  for (const image of normalizeResponseImages(value)) {
+    result.push({ type: "image", image });
+  }
+  if (event !== value) {
+    for (const image of normalizeResponseImages(event)) {
+      result.push({ type: "image", image });
     }
   }
 
-  return JSON.stringify({ message: textParts.join(""), usage, latencyMs });
+  const metadata = isRecord(event.metadata) ? event.metadata : undefined;
+  if (metadata !== undefined) {
+    const usage = normalizeUsage(metadata.usage);
+    const metrics = isRecord(metadata.metrics) ? metadata.metrics : undefined;
+    const latencyMs = typeof metrics?.latencyMs === "number"
+      ? metrics.latencyMs
+      : typeof metadata.latencyMs === "number"
+        ? metadata.latencyMs
+        : undefined;
+    if (usage !== undefined || latencyMs !== undefined) {
+      result.push({
+        type: "metadata",
+        ...(usage === undefined ? {} : { usage }),
+        ...(latencyMs === undefined ? {} : { latencyMs }),
+      });
+    }
+  }
+
+  return result;
 }
 
-function normalizeJsonResponse(
-  value: unknown,
-): Omit<InvokeRuntimeResult, "sessionId"> {
-  if (typeof value === "string" && value.length > 0) {
-    return { message: value };
+function readRuntimeBody(body: unknown): AsyncIterable<Uint8Array> {
+  if (isReadableStream(body)) {
+    return {
+      async *[Symbol.asyncIterator]() {
+        const reader = body.getReader();
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) return;
+            yield next.value;
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      },
+    };
   }
 
-  if (!isRecord(value)) {
-    throw new AgentCoreInvocationError(
-      "AgentCore Runtime returned an unsupported JSON response",
-    );
-  }
+  if (isAsyncIterable(body)) return body;
+  throw new AgentCoreInvocationError("AgentCore Runtime returned an unsupported stream");
+}
 
-  const message = [value.message, value.response, value.result, value.output].find(
-    (candidate): candidate is string =>
-      typeof candidate === "string" && candidate.length > 0,
+async function cancelRuntimeBody(body: unknown): Promise<void> {
+  if (isReadableStream(body) && !body.locked) {
+    await body.cancel().catch(() => undefined);
+    return;
+  }
+  if (isRecord(body) && typeof body.destroy === "function") body.destroy();
+}
+
+function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
+  return isRecord(value) && typeof value.getReader === "function";
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<Uint8Array> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Symbol.asyncIterator in value &&
+    typeof value[Symbol.asyncIterator] === "function"
   );
-
-  if (message === undefined) {
-    throw new AgentCoreInvocationError(
-      "AgentCore Runtime response did not include a text message",
-    );
-  }
-
-  const images = normalizeResponseImages(value);
-  const usage = normalizeUsage(value.usage);
-  const latencyMs = typeof value.latencyMs === "number" ? value.latencyMs : undefined;
-  return {
-    message,
-    ...(images.length === 0 ? {} : { images }),
-    ...(usage === undefined ? {} : { usage }),
-    ...(latencyMs === undefined ? {} : { latencyMs }),
-  };
 }
 
 function normalizeUsage(value: unknown): InvokeRuntimeResult["usage"] {
