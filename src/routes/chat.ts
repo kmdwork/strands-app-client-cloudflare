@@ -5,6 +5,7 @@ import {
   invokeRuntimeStream,
 } from "../agentcore/invoke-runtime";
 import { requireSession } from "../auth/middleware";
+import { createAgentAccessToken } from "../auth/agent-token";
 import type { AppEnv } from "../auth/types";
 import { readJsonWithLimit, RequestBodyError } from "../http/read-json";
 import { parseChatRequest, RequestValidationError } from "../schemas/chat";
@@ -26,12 +27,20 @@ chatRoutes.post("/", async (c) => {
     const input = parseChatRequest(body);
     const sessionId = input.sessionId ?? crypto.randomUUID();
     const authSession = c.get("authSession");
+    const userAccessToken = await createAgentAccessToken(
+      c.env.AGENT_API_TOKEN_SECRET,
+      {
+        userId: authSession.user.id,
+        scopes: ["aircon:read"],
+      },
+    );
 
     const abortController = new AbortController();
     const runtime = await invokeRuntimeStream(c.env, {
       message: input.message,
       sessionId,
       actorId: authSession.user.id,
+      userAccessToken,
       image: input.image,
     }, { abortSignal: abortController.signal });
 

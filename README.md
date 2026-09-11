@@ -19,13 +19,17 @@ npm install
 cp .dev.vars.example .dev.vars
 ```
 
-`.dev.vars` にローカル開発用のAWS認証情報、`AGENTCORE_RUNTIME_ARN`、`BETTER_AUTH_SECRET` を設定してください。ルートユーザーや共用の管理者認証情報は使用せず、対象Runtimeに対する `bedrock-agentcore:InvokeAgentRuntime`（`runtimeUserId` を渡す場合は `bedrock-agentcore:InvokeAgentRuntimeForUser` も）だけを許可したIAMプリンシパルを使用してください。
+`.dev.vars` にローカル開発用のAWS認証情報、`AGENTCORE_RUNTIME_ARN`、`BETTER_AUTH_SECRET`、`AGENT_API_TOKEN_SECRET` を設定してください。ルートユーザーや共用の管理者認証情報は使用せず、対象Runtimeに対する `bedrock-agentcore:InvokeAgentRuntime`（`runtimeUserId` を渡す場合は `bedrock-agentcore:InvokeAgentRuntimeForUser` も）だけを許可したIAMプリンシパルを使用してください。
 
 `BETTER_AUTH_SECRET` には十分に長いランダム値を使用します。
 
 ```bash
 openssl rand -base64 32
 ```
+
+`AGENT_API_TOKEN_SECRET` にも別のランダム値を生成し、Better Authとは
+署名鍵を共有しないでください。本番ではそれぞれをWrangler secretとして
+登録します。
 
 現在の最小実装はアクセスキーIDとシークレットアクセスキーの組み合わせを対象にしています。一時認証情報の `AWS_SESSION_TOKEN` 対応は、接続確認後の認証強化時に追加します。
 
@@ -118,11 +122,14 @@ AgentCoreにはBetter AuthのユーザーIDを `runtimeUserId` として渡し�
 }
 ```
 
-AgentCore Runtimeには、接続先の `MyAgent/main.py` が定義する `prompt` と `media` を含むJSONペイロードを送信します。
+AgentCore Runtimeには、接続先の `MyAgent/main.py` が定義する `prompt`、
+ログインユーザーに紐づく `user_access_token`、任意の `media` を含む
+JSONペイロードを送信します。Better AuthのCookieそのものは送信しません。
 
 ```json
 {
   "prompt": "この画像を説明してください",
+  "user_access_token": "ログインユーザーに紐づく短期token",
   "media": {
     "type": "image",
     "format": "png",

@@ -7,6 +7,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run",
+    "agent-token:test": "node --env-file=.dev.vars scripts/create-agent-test-token.mjs",
     "types": "wrangler types",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -15,7 +16,8 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-agentcore": "^3.1126.0",
     "better-auth": "^1.7.2",
-    "hono": "^4.13.5"
+    "hono": "^4.13.5",
+    "jose": "^6.2.12"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

@@ -64,6 +64,7 @@ export async function invokeRuntimeStream(
   const client = createAgentCoreClient(env);
   const payload = {
     prompt: input.message,
+    user_access_token: input.userAccessToken,
     ...(input.image === undefined
       ? {}
       : {

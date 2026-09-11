@@ -3,6 +3,7 @@ import { auth } from "./auth/auth";
 import type { AppEnv } from "./auth/types";
 import { authMigrationRoutes } from "./routes/auth-migrations";
 import { airconRoutes } from "./routes/aircon";
+import { agentAirconRoutes } from "./routes/agent-aircon";
 import { chatRoutes } from "./routes/chat";
 
 const app = new Hono<AppEnv>();
@@ -37,6 +38,7 @@ app.get("/aircon", async (c) => {
 
 app.route("/internal/auth/migrate", authMigrationRoutes);
 app.route("/api/aircon", airconRoutes);
+app.route("/api/agent/aircon", agentAirconRoutes);
 app.route("/api/chat", chatRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));

@@ -154,6 +154,7 @@ describe("invokeRuntimeStream", () => {
       message: "hello",
       sessionId: "input-session",
       actorId: "actor",
+      userAccessToken: "delegated-token",
     }, { abortSignal: abortController.signal });
 
     await expect(collectFrom(stream.events)).resolves.toEqual([
@@ -162,6 +163,10 @@ describe("invokeRuntimeStream", () => {
     ]);
     const command = clientMocks.send.mock.calls[0]?.[0];
     expect(command.input.accept).toBe("text/event-stream");
+    expect(JSON.parse(new TextDecoder().decode(command.input.payload))).toEqual({
+      prompt: "hello",
+      user_access_token: "delegated-token",
+    });
     expect(clientMocks.send.mock.calls[0]?.[1]).toEqual({
       abortSignal: abortController.signal,
     });
@@ -169,6 +174,38 @@ describe("invokeRuntimeStream", () => {
     expect(releaseLock).toHaveBeenCalledOnce();
     expect(cancel).toHaveBeenCalledOnce();
     expect(clientMocks.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("keeps image media while adding the delegated token to the payload", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    });
+    clientMocks.send.mockResolvedValue({
+      response: body,
+      contentType: "text/event-stream",
+      statusCode: 200,
+    });
+
+    const stream = await invokeRuntimeStream({
+      AGENTCORE_RUNTIME_ARN: "arn:test",
+    } as Env, {
+      message: "describe",
+      sessionId: "session",
+      actorId: "actor",
+      userAccessToken: "delegated-token",
+      image: { mediaType: "image/png", data: "aGVsbG8=" },
+    });
+    await collectFrom(stream.events);
+
+    const command = clientMocks.send.mock.calls[0]?.[0];
+    expect(JSON.parse(new TextDecoder().decode(command.input.payload))).toEqual({
+      prompt: "describe",
+      user_access_token: "delegated-token",
+      media: { type: "image", format: "png", data: "aGVsbG8=" },
+    });
   });
 
   it("destroys the client when invocation fails before streaming", async () => {
@@ -179,6 +216,7 @@ describe("invokeRuntimeStream", () => {
       message: "hello",
       sessionId: "session",
       actorId: "actor",
+      userAccessToken: "delegated-token",
     })).rejects.toMatchObject({
       name: "AgentCoreInvocationError",
       message: "Failed to invoke AgentCore Runtime",
@@ -208,6 +246,7 @@ describe("invokeRuntimeStream", () => {
       message: "hello",
       sessionId: "session",
       actorId: "actor",
+      userAccessToken: "delegated-token",
     });
 
     await expect(collectFrom(stream.events)).rejects.toThrow("stream failure");
@@ -237,6 +276,7 @@ describe("invokeRuntimeStream", () => {
       message: "hello",
       sessionId: "session",
       actorId: "actor",
+      userAccessToken: "delegated-token",
     });
     const iterator = stream.events[Symbol.asyncIterator]();
 
@@ -261,6 +301,7 @@ describe("invokeRuntimeStream", () => {
       message: "hello",
       sessionId: "session",
       actorId: "actor",
+      userAccessToken: "delegated-token",
     })).rejects.toThrow("unsupported content type");
     expect(clientMocks.destroy).toHaveBeenCalledOnce();
   });

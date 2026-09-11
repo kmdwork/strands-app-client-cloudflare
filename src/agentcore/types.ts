@@ -12,6 +12,7 @@ export interface InvokeRuntimeInput {
   message: string;
   sessionId: string;
   actorId: string;
+  userAccessToken: string;
   image?: RuntimeImage;
 }
 

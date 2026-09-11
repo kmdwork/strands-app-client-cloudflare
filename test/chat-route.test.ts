@@ -7,6 +7,11 @@ import type {
 const mocks = vi.hoisted(() => ({
   authorized: true,
   invokeRuntimeStream: vi.fn(),
+  createAgentAccessToken: vi.fn(),
+}));
+
+vi.mock("../src/auth/agent-token", () => ({
+  createAgentAccessToken: mocks.createAgentAccessToken,
 }));
 
 vi.mock("../src/auth/middleware", () => ({
@@ -33,7 +38,9 @@ vi.mock("../src/agentcore/invoke-runtime", async (importOriginal) => {
 import { AgentCoreInvocationError } from "../src/agentcore/invoke-runtime";
 import { chatRoutes } from "../src/routes/chat";
 
-const environment = {} as Env;
+const environment = {
+  AGENT_API_TOKEN_SECRET: "test-agent-api-secret-at-least-32-bytes",
+} as Env;
 
 function runtimeResult(
   events: RuntimeStreamEvent[],
@@ -61,6 +68,8 @@ describe("POST /", () => {
   beforeEach(() => {
     mocks.authorized = true;
     mocks.invokeRuntimeStream.mockReset();
+    mocks.createAgentAccessToken.mockReset();
+    mocks.createAgentAccessToken.mockResolvedValue("delegated-token");
   });
 
   it("keeps authentication, content type, size, and validation failures as JSON", async () => {
@@ -99,6 +108,7 @@ describe("POST /", () => {
     );
     expect(invalid.status).toBe(400);
     expect(mocks.invokeRuntimeStream).not.toHaveBeenCalled();
+    expect(mocks.createAgentAccessToken).not.toHaveBeenCalled();
   });
 
   it("returns a pre-stream invocation failure as 502 JSON", async () => {
@@ -148,7 +158,13 @@ describe("POST /", () => {
     expect(text.indexOf("event: image")).toBeLessThan(text.indexOf("event: done"));
     expect(mocks.invokeRuntimeStream.mock.calls[0]?.[1]).toMatchObject({
       sessionId: "existing-session-123456789012345678",
+      actorId: "user-1",
+      userAccessToken: "delegated-token",
     });
+    expect(mocks.createAgentAccessToken).toHaveBeenCalledWith(
+      environment.AGENT_API_TOKEN_SECRET,
+      { userId: "user-1", scopes: ["aircon:read"] },
+    );
     expect(close).toHaveBeenCalled();
   });
 
