@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { auth } from "./auth/auth";
 import type { AppEnv } from "./auth/types";
 import { authMigrationRoutes } from "./routes/auth-migrations";
+import { airconRoutes } from "./routes/aircon";
 import { chatRoutes } from "./routes/chat";
 
 const app = new Hono<AppEnv>();
@@ -23,7 +24,19 @@ app.get("/api/health", (c) =>
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
+app.get("/aircon", async (c) => {
+  const session = await auth.api.getSession({
+    headers: c.req.raw.headers,
+  });
+  if (session === null) {
+    return c.redirect("/");
+  }
+
+  return c.redirect("/aircon-view");
+});
+
 app.route("/internal/auth/migrate", authMigrationRoutes);
+app.route("/api/aircon", airconRoutes);
 app.route("/api/chat", chatRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));

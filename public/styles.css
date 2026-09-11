@@ -645,6 +645,245 @@ button {
   clip-path: inset(50%);
 }
 
+.header-link {
+  text-decoration: none;
+}
+
+.aircon-shell {
+  min-height: 100vh;
+}
+
+.aircon-dashboard {
+  width: min(100% - 36px, 1180px);
+  margin: 0 auto;
+  padding: 56px 0 80px;
+}
+
+.aircon-heading,
+.section-heading,
+.company-heading,
+.property-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.aircon-heading {
+  align-items: end;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.aircon-heading h1 {
+  margin: 0 0 10px;
+  font-family: Georgia, "Noto Serif JP", serif;
+  font-size: clamp(32px, 4vw, 48px);
+  font-weight: 500;
+}
+
+.dashboard-error {
+  margin: 24px 0 0;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin: 28px 0 56px;
+}
+
+.summary-card {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.summary-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.summary-value {
+  font-family: Georgia, serif;
+  font-size: 30px;
+  font-weight: 500;
+}
+
+.section-heading {
+  margin: 48px 0 18px;
+}
+
+.section-heading h2 {
+  margin: 0;
+  font-family: Georgia, "Noto Serif JP", serif;
+  font-size: 27px;
+  font-weight: 500;
+}
+
+.inventory-list,
+.property-list,
+.system-list {
+  display: grid;
+  gap: 14px;
+}
+
+.company-card {
+  overflow: hidden;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 18px;
+}
+
+.company-heading {
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.company-heading h3,
+.property-heading h4,
+.system-card h5 {
+  margin: 0;
+}
+
+.company-heading h3 {
+  font-family: Georgia, "Noto Serif JP", serif;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.count-badge,
+.unit-type {
+  padding: 5px 9px;
+  color: var(--brand);
+  background: rgba(49, 95, 76, 0.08);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.property-list {
+  padding: 16px;
+}
+
+.property-card {
+  padding: 18px;
+  background: #faf8f2;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+}
+
+.property-heading {
+  align-items: start;
+  margin-bottom: 14px;
+}
+
+.property-heading h4 {
+  font-size: 16px;
+}
+
+.property-address {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.system-card {
+  padding: 15px;
+  background: var(--paper);
+  border-left: 3px solid var(--brand);
+  border-radius: 4px 10px 10px 4px;
+}
+
+.system-card h5 {
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.unit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 9px;
+}
+
+.unit-card {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.unit-name {
+  font-size: 13px;
+}
+
+.unit-model {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.empty-state {
+  margin: 0;
+  padding: 14px;
+  color: var(--muted);
+  background: rgba(109, 113, 105, 0.05);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.empty-state-large {
+  padding: 38px;
+  text-align: center;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.data-table th {
+  color: var(--muted);
+  background: #faf8f2;
+  font-size: 11px;
+}
+
+.data-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.model-number {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+}
+
+.empty-table-cell {
+  color: var(--muted);
+  text-align: center !important;
+}
+
 @keyframes message-in {
   from {
     opacity: 0;
@@ -704,6 +943,19 @@ button {
 
   .conversation {
     padding-top: 38px;
+  }
+
+  .aircon-dashboard {
+    padding-top: 38px;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .aircon-heading {
+    align-items: start;
+    flex-direction: column;
   }
 
   .message {

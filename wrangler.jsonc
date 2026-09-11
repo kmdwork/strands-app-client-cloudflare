@@ -26,7 +26,8 @@
 		"directory": "./public",
 		"run_worker_first": [
 			"/api/*",
-			"/internal/*"
+			"/internal/*",
+			"/aircon"
 		]
 	},
 	"d1_databases": [
