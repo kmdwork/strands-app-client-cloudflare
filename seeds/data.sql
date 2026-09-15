@@ -3,7 +3,7 @@
 
 INSERT INTO "companies" ("id", "name", "createdAt", "updatedAt")
 VALUES
-    ('sample-company-kamada', 'カマダ設備株式会社', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    ('sample-company-kamada', 'kmd設備株式会社', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
     ('sample-company-demo', 'デモ施設管理株式会社', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT("id") DO UPDATE SET
     "name" = excluded."name",

@@ -81,7 +81,11 @@ export async function verifyAgentAccessToken(
       iat: payload.iat,
       exp: payload.exp,
     };
-  } catch {
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: "agent_token_verification_failed",
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    }));
     throw new AgentTokenError();
   }
 }
