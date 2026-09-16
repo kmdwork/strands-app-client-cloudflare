@@ -7,6 +7,8 @@ Cloudflare Workers + Hono から Amazon Bedrock AgentCore Runtimeを呼び出す
 - `GET /api/health`
 - `GET|POST /api/auth/*`（Better Auth）
 - `POST /api/chat`（認証必須）
+- `POST /api/chat/resume`（認証必須・承認待ちRuntimeの再開）
+- `POST /api/agent/aircon/changes/apply`（AgentCore用・Bearer write token必須）
 - `POST /internal/auth/migrate`（ローカル開発専用）
 - `GET /`（ログイン・チャット画面）
 
@@ -78,7 +80,7 @@ curl -N -b cookies.txt -X POST http://localhost:8787/api/chat \
 Assistantメッセージを更新します。`session` イベントの `sessionId` を次の
 リクエストでも指定すると、同じAgentCoreセッションを継続できます。
 
-downstream SSEイベントは `session`、`delta`、`metadata`、`image`、`done` です。
+downstream SSEイベントは `session`、`delta`、`metadata`、`image`、`confirmation_required`、`done` です。
 
 ~~~text
 event: session
@@ -92,6 +94,9 @@ data: {"usage":{"inputTokens":1,"outputTokens":2,"totalTokens":3},"latencyMs":12
 
 event: image
 data: {"mediaType":"image/png","data":"Base64エンコードした画像データ"}
+
+event: confirmation_required
+data: {"interruptId":"...","toolName":"apply_aircon_changes","summary":{"operations":[{"type":"create_company","name":"東京本社"}]}}
 
 event: done
 data: {}
@@ -110,6 +115,60 @@ curl -N -b cookies.txt -X POST http://localhost:8787/api/chat \
 
 AgentCoreにはBetter AuthのユーザーIDを `runtimeUserId` として渡します。これにより、AgentCoreのメモリを認証ユーザー単位で分離できます。
 
+## Aircon write approval / resume contract
+
+`apply_aircon_changes` が承認待ちになると、`POST /api/chat` は
+`confirmation_required` SSEイベントを返します。画面はこのイベントの
+`interruptId`、`toolName`、`summary` を表示し、「実行する / キャンセル」操作を
+提示します。表示用summaryは実行payloadとして利用しません。
+
+```json
+{
+  "sessionId": "sessionイベントで返された値",
+  "interruptId": "confirmation_requiredイベントで返された値",
+  "decision": "approve"
+}
+```
+
+`decision` は `approve` または `reject` のみです。Browserからoperationsやtool
+input、DB値は再送しません。resumeは必ず同じログインユーザーのRuntime identityを
+サーバー側で再利用します。approve時のみread + write権限を含む60秒tokenを、reject
+時はread-only tokenを新規発行します。Cookie、token、actor IDはクライアントから
+受け取りません。resumeのレスポンスも通常のchatと同じSSE形式です。
+
+`POST /api/agent/aircon/changes/apply` は、Runtimeの
+`apply_aircon_changes` 専用のwrite APIです。Better Auth Cookieは受け付けず、
+`aircon:write` scopeを持つBearer tokenだけを受け付けます。通常chatのread-only
+tokenでは403になります。
+
+リクエストはoperationsだけを受け付けます。対応するのはcreate/updateのみで、
+`delete_*`、任意SQL、任意のテーブル名は受け付けません。
+
+```json
+{
+  "operations": [
+    { "type": "create_company", "name": "むらしま生産" },
+    { "type": "create_property", "name": "東京本社", "company_ref": 0 }
+  ]
+}
+```
+
+対応operationは `create_company`、`create_property`、`create_system`、
+`create_model`、`create_unit`、および各 `update_*` です。新規レコードのIDは
+Worker側で生成します。`*_ref` は同一リクエスト内の先行するcreate operationを
+参照するゼロ始まりの番号です。
+
+すべてのoperationは検証後にD1のprepared statement + `batch()` で1トランザクション
+として実行されます。1件でも失敗した場合は全体がrollbackされ、内部SQLや認証情報は
+レスポンスへ返しません。成功時は、AgentCoreが最終回答に使える構造化結果を返します。
+
+```bash
+curl -N -b cookies.txt -X POST http://localhost:8787/api/chat/resume \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: text/event-stream' \
+  -d '{"sessionId":"sessionイベントで返された値","interruptId":"confirmation_requiredイベントで返された値","decision":"approve"}'
+```
+
 画像を添付する場合、`POST /api/chat` に次のJSONを送ります。接続先Runtimeに合わせてJPEG、PNG、WebPを受け付け、上限は2 MiBです。
 
 ```json
@@ -123,12 +182,14 @@ AgentCoreにはBetter AuthのユーザーIDを `runtimeUserId` として渡し�
 ```
 
 AgentCore Runtimeには、接続先の `MyAgent/main.py` が定義する `prompt`、
-ログインユーザーに紐づく `user_access_token`、任意の `media` を含む
+サーバー側で決定した `actor_id`、ログインユーザーに紐づく
+`user_access_token`、任意の `media` を含む
 JSONペイロードを送信します。Better AuthのCookieそのものは送信しません。
 
 ```json
 {
   "prompt": "この画像を説明してください",
+  "actor_id": "認証済みユーザーID",
   "user_access_token": "ログインユーザーに紐づく短期token",
   "media": {
     "type": "image",

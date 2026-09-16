@@ -8,13 +8,29 @@ export interface RuntimeImage {
   data: string;
 }
 
-export interface InvokeRuntimeInput {
-  message: string;
+interface RuntimeInvocationIdentity {
   sessionId: string;
   actorId: string;
   userAccessToken: string;
+}
+
+export interface RuntimeInterruptResponse {
+  interruptId: string;
+  response: "approve" | "reject";
+}
+
+export interface InvokeRuntimePromptInput extends RuntimeInvocationIdentity {
+  message: string;
   image?: RuntimeImage;
 }
+
+export interface InvokeRuntimeResumeInput extends RuntimeInvocationIdentity {
+  interruptResponses: RuntimeInterruptResponse[];
+}
+
+export type InvokeRuntimeInput =
+  | InvokeRuntimePromptInput
+  | InvokeRuntimeResumeInput;
 
 export interface InvokeRuntimeResult {
   message: string;
@@ -28,7 +44,19 @@ export type RuntimeStreamEvent =
   | { type: "delta"; text: string }
   | { type: "image"; image: RuntimeImage }
   | { type: "metadata"; usage?: RuntimeUsage; latencyMs?: number }
+  | {
+    type: "confirmation_required";
+    confirmation: RuntimeConfirmation;
+  }
   | { type: "done" };
+
+export interface RuntimeConfirmation {
+  interruptId: string;
+  toolName: string;
+  summary: {
+    operations?: Array<Record<string, string | number | boolean | null>>;
+  };
+}
 
 export interface InvokeRuntimeStreamResult {
   sessionId: string;

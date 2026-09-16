@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ChatStreamError,
   consumeSseFrames,
+  resumeChat,
   streamChat,
 } from "../public/chat-stream.js";
 
@@ -109,6 +110,39 @@ describe("streamChat", () => {
       metadata: { usage: { totalTokens: 3 }, latencyMs: 42 },
       image: { mediaType: "image/png", data: "aGVsbG8=" },
     });
+  });
+
+  it("sends only resume identity and decision data to the resume endpoint", async () => {
+    const confirmation = [];
+    const fetchImpl = vi.fn().mockResolvedValue(new Response([
+      'event: confirmation_required\ndata: {"interruptId":"interrupt-2","toolName":"apply_aircon_changes","summary":{"operations":[]}}',
+      "",
+      "event: done\ndata: {}",
+      "",
+    ].join("\n"), {
+      headers: { "Content-Type": "text/event-stream" },
+    }));
+    const body = {
+      sessionId: "session-1",
+      interruptId: "interrupt-1",
+      decision: "approve",
+    };
+
+    await resumeChat(body, {
+      confirmation_required(data) {
+        confirmation.push(data);
+      },
+    }, fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/chat/resume", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(body),
+    }));
+    expect(confirmation).toEqual([{
+      interruptId: "interrupt-2",
+      toolName: "apply_aircon_changes",
+      summary: { operations: [] },
+    }]);
   });
 
   it("reports a stream error after preserving earlier deltas", async () => {

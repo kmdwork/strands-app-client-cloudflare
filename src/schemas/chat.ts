@@ -7,8 +7,15 @@ export interface ChatRequest {
   };
 }
 
+export interface ResumeChatRequest {
+  sessionId: string;
+  interruptId: string;
+  decision: "approve" | "reject";
+}
+
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{32,99}$/;
 const MAX_MESSAGE_LENGTH = 4_000;
+const MAX_INTERRUPT_ID_LENGTH = 200;
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const IMAGE_MEDIA_TYPES = new Set([
@@ -45,14 +52,9 @@ export function parseChatRequest(value: unknown): ChatRequest {
     );
   }
 
-  const sessionId = value.sessionId;
-  if (sessionId !== undefined) {
-    if (typeof sessionId !== "string" || !SESSION_ID_PATTERN.test(sessionId)) {
-      throw new RequestValidationError(
-        "sessionId must be 33-100 characters using letters, numbers, hyphens, or underscores",
-      );
-    }
-  }
+  const sessionId = value.sessionId === undefined
+    ? undefined
+    : parseSessionId(value.sessionId);
 
   const image = parseImage(value.image);
 
@@ -61,6 +63,41 @@ export function parseChatRequest(value: unknown): ChatRequest {
     ...(sessionId === undefined ? {} : { sessionId }),
     ...(image === undefined ? {} : { image }),
   };
+}
+
+export function parseResumeChatRequest(value: unknown): ResumeChatRequest {
+  if (!isRecord(value)) {
+    throw new RequestValidationError("Request body must be a JSON object");
+  }
+
+  const interruptId = value.interruptId;
+  if (
+    typeof interruptId !== "string"
+    || interruptId.trim().length === 0
+    || interruptId.trim().length > MAX_INTERRUPT_ID_LENGTH
+  ) {
+    throw new RequestValidationError(
+      `interruptId must be 1-${MAX_INTERRUPT_ID_LENGTH} characters`,
+    );
+  }
+  if (value.decision !== "approve" && value.decision !== "reject") {
+    throw new RequestValidationError("decision must be approve or reject");
+  }
+
+  return {
+    sessionId: parseSessionId(value.sessionId),
+    interruptId: interruptId.trim(),
+    decision: value.decision,
+  };
+}
+
+function parseSessionId(value: unknown): string {
+  if (typeof value !== "string" || !SESSION_ID_PATTERN.test(value)) {
+    throw new RequestValidationError(
+      "sessionId must be 33-100 characters using letters, numbers, hyphens, or underscores",
+    );
+  }
+  return value;
 }
 
 function parseImage(value: unknown): ChatRequest["image"] {

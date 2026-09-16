@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../src/auth/agent-token", () => ({
   createAgentAccessToken: mocks.createAgentAccessToken,
+  AGENT_WRITE_TOKEN_TTL_SECONDS: 60,
 }));
 
 vi.mock("../src/auth/middleware", () => ({
@@ -58,6 +59,14 @@ function runtimeResult(
 
 function chatRequest(body: unknown, headers: HeadersInit = {}): Request {
   return new Request("http://localhost/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+function resumeRequest(body: unknown, headers: HeadersInit = {}): Request {
+  return new Request("http://localhost/resume", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
@@ -166,6 +175,89 @@ describe("POST /", () => {
       { userId: "user-1", scopes: ["aircon:read"] },
     );
     expect(close).toHaveBeenCalled();
+  });
+
+  it("returns a stable confirmation_required SSE event for an approval request", async () => {
+    mocks.invokeRuntimeStream.mockResolvedValue(runtimeResult([
+      {
+        type: "confirmation_required",
+        confirmation: {
+          interruptId: "interrupt-1",
+          toolName: "apply_aircon_changes",
+          summary: { operations: [{ type: "create_company", name: "Tokyo HQ" }] },
+        },
+      },
+      { type: "done" },
+    ]));
+
+    const response = await chatRoutes.request(chatRequest({ message: "create company" }), undefined, environment);
+    const text = await response.text();
+
+    expect(text).toContain(
+      'event: confirmation_required\ndata: {"interruptId":"interrupt-1","toolName":"apply_aircon_changes","summary":{"operations":[{"type":"create_company","name":"Tokyo HQ"}]}}',
+    );
+    expect(text).not.toContain("user_access_token");
+  });
+
+  it("resumes the same session and authenticated actor with a short-lived write-enabled token", async () => {
+    mocks.invokeRuntimeStream.mockResolvedValue(runtimeResult([{ type: "done" }]));
+    const sessionId = "existing-session-123456789012345678";
+
+    const response = await chatRoutes.request(
+      "/resume",
+      resumeRequest({
+        sessionId,
+        interruptId: "interrupt-1",
+        decision: "approve",
+      }),
+      environment,
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.invokeRuntimeStream).toHaveBeenCalledWith(
+      environment,
+      {
+        sessionId,
+        actorId: "user-1",
+        userAccessToken: "delegated-token",
+        interruptResponses: [{ interruptId: "interrupt-1", response: "approve" }],
+      },
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
+    );
+    expect(mocks.createAgentAccessToken).toHaveBeenCalledWith(
+      environment.AGENT_API_TOKEN_SECRET,
+      { userId: "user-1", scopes: ["aircon:read", "aircon:write"], ttlSeconds: 60 },
+    );
+  });
+
+  it("resumes a rejection with a read-only token", async () => {
+    mocks.invokeRuntimeStream.mockResolvedValue(runtimeResult([{ type: "done" }]));
+    const response = await chatRoutes.request(
+      "/resume",
+      resumeRequest({
+        sessionId: "existing-session-123456789012345678",
+        interruptId: "interrupt-1",
+        decision: "reject",
+      }),
+      environment,
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.createAgentAccessToken).toHaveBeenCalledWith(
+      environment.AGENT_API_TOKEN_SECRET,
+      { userId: "user-1", scopes: ["aircon:read"] },
+    );
+  });
+
+  it("rejects an invalid resume request before issuing a write token", async () => {
+    const response = await chatRoutes.request(
+      "/resume",
+      resumeRequest({ sessionId: "short", interruptId: "", decision: "approve" }),
+      environment,
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.createAgentAccessToken).not.toHaveBeenCalled();
+    expect(mocks.invokeRuntimeStream).not.toHaveBeenCalled();
   });
 
   it("makes the first delta readable before upstream completion", async () => {

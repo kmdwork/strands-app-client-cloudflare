@@ -2,6 +2,7 @@ import { jwtVerify, SignJWT } from "jose";
 
 export const AGENT_TOKEN_AUDIENCE = "aircon-agent-api";
 export const AGENT_TOKEN_TTL_SECONDS = 180;
+export const AGENT_WRITE_TOKEN_TTL_SECONDS = 60;
 const AGENT_TOKEN_ALGORITHM = "HS256";
 
 export type AgentScope = "aircon:read" | "aircon:write";
@@ -17,6 +18,7 @@ export interface AgentTokenClaims {
 interface CreateAgentAccessTokenInput {
   userId: string;
   scopes: AgentScope[];
+  ttlSeconds?: number;
 }
 
 export class AgentTokenError extends Error {
@@ -31,7 +33,15 @@ export async function createAgentAccessToken(
   input: CreateAgentAccessTokenInput,
   currentDate = new Date(),
 ): Promise<string> {
-  if (secret.length < 32 || input.userId.length === 0 || input.scopes.length === 0) {
+  const ttlSeconds = input.ttlSeconds ?? AGENT_TOKEN_TTL_SECONDS;
+  if (
+    secret.length < 32
+    || input.userId.length === 0
+    || input.scopes.length === 0
+    || !Number.isInteger(ttlSeconds)
+    || ttlSeconds < AGENT_WRITE_TOKEN_TTL_SECONDS
+    || ttlSeconds > AGENT_TOKEN_TTL_SECONDS
+  ) {
     throw new AgentTokenError();
   }
 
@@ -41,7 +51,7 @@ export async function createAgentAccessToken(
     .setSubject(input.userId)
     .setAudience(AGENT_TOKEN_AUDIENCE)
     .setIssuedAt(issuedAt)
-    .setExpirationTime(issuedAt + AGENT_TOKEN_TTL_SECONDS)
+    .setExpirationTime(issuedAt + ttlSeconds)
     .sign(encodeSecret(secret));
 }
 

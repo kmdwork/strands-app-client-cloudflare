@@ -85,6 +85,24 @@ describe("parseRuntimeEventStream", () => {
     ]);
   });
 
+  it("normalizes an approval interrupt without exposing unrelated reason fields", async () => {
+    await expect(collect([
+      'data: {"type":"interrupt","interrupts":[{"interrupt_id":"interrupt-1","name":"aircon-write-approval","reason":{"tool_name":"apply_aircon_changes","operations":[{"type":"create_company","name":"Tokyo HQ","user_access_token":"must-not-leak"}],"user_access_token":"must-not-leak"}}]}\n\n',
+    ])).resolves.toEqual([
+      {
+        type: "confirmation_required",
+        confirmation: {
+          interruptId: "interrupt-1",
+          toolName: "apply_aircon_changes",
+          summary: {
+            operations: [{ type: "create_company", name: "Tokyo HQ" }],
+          },
+        },
+      },
+      { type: "done" },
+    ]);
+  });
+
   it("emits done only once for an explicit [DONE]", async () => {
     await expect(collect([
       'data: {"event":{"contentBlockDelta":{"delta":{"text":"ok"}}}}\n\n',
@@ -165,6 +183,7 @@ describe("invokeRuntimeStream", () => {
     expect(command.input.accept).toBe("text/event-stream");
     expect(JSON.parse(new TextDecoder().decode(command.input.payload))).toEqual({
       prompt: "hello",
+      actor_id: "actor",
       user_access_token: "delegated-token",
     });
     expect(clientMocks.send.mock.calls[0]?.[1]).toEqual({
@@ -203,8 +222,42 @@ describe("invokeRuntimeStream", () => {
     const command = clientMocks.send.mock.calls[0]?.[0];
     expect(JSON.parse(new TextDecoder().decode(command.input.payload))).toEqual({
       prompt: "describe",
+      actor_id: "actor",
       user_access_token: "delegated-token",
       media: { type: "image", format: "png", data: "aGVsbG8=" },
+    });
+  });
+
+  it("sends a resume payload without a prompt and preserves the runtime identity", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    });
+    clientMocks.send.mockResolvedValue({
+      response: body,
+      contentType: "text/event-stream",
+      statusCode: 200,
+    });
+
+    const stream = await invokeRuntimeStream({
+      AGENTCORE_RUNTIME_ARN: "arn:test",
+    } as Env, {
+      sessionId: "session",
+      actorId: "actor",
+      userAccessToken: "write-token",
+      interruptResponses: [{ interruptId: "interrupt-1", response: "approve" }],
+    });
+    await collectFrom(stream.events);
+
+    const command = clientMocks.send.mock.calls[0]?.[0];
+    expect(command.input.runtimeSessionId).toBe("session");
+    expect(command.input.runtimeUserId).toBe("actor");
+    expect(JSON.parse(new TextDecoder().decode(command.input.payload))).toEqual({
+      actor_id: "actor",
+      user_access_token: "write-token",
+      interrupt_responses: [{ interrupt_id: "interrupt-1", response: "approve" }],
     });
   });
 

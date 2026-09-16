@@ -4,6 +4,7 @@ import type {
   InvokeRuntimeInput,
   InvokeRuntimeResult,
   InvokeRuntimeStreamResult,
+  RuntimeConfirmation,
   RuntimeImage,
   RuntimeStreamEvent,
   RuntimeUsage,
@@ -62,21 +63,7 @@ export async function invokeRuntimeStream(
   options: { abortSignal?: AbortSignal } = {},
 ): Promise<InvokeRuntimeStreamResult> {
   const client = createAgentCoreClient(env);
-  const payload = {
-    prompt: input.message,
-    user_access_token: input.userAccessToken,
-    ...(input.image === undefined
-      ? {}
-      : {
-          media: {
-            type: "image",
-            format: input.image.mediaType === "image/jpeg"
-              ? "jpeg"
-              : input.image.mediaType.slice("image/".length),
-            data: input.image.data,
-          },
-        }),
-  };
+  const payload = buildRuntimePayload(input);
 
   try {
     const response = await client.send(
@@ -132,6 +119,38 @@ export async function invokeRuntimeStream(
     }
     throw new AgentCoreInvocationError("Failed to invoke AgentCore Runtime", error);
   }
+}
+
+function buildRuntimePayload(input: InvokeRuntimeInput): Record<string, unknown> {
+  const identity = {
+    actor_id: input.actorId,
+    user_access_token: input.userAccessToken,
+  };
+  if ("interruptResponses" in input) {
+    return {
+      ...identity,
+      interrupt_responses: input.interruptResponses.map((item) => ({
+        interrupt_id: item.interruptId,
+        response: item.response,
+      })),
+    };
+  }
+
+  return {
+    ...identity,
+    prompt: input.message,
+    ...(input.image === undefined
+      ? {}
+      : {
+          media: {
+            type: "image",
+            format: input.image.mediaType === "image/jpeg"
+              ? "jpeg"
+              : input.image.mediaType.slice("image/".length),
+            data: input.image.data,
+          },
+        }),
+  };
 }
 
 export async function* parseRuntimeEventStream(
@@ -204,6 +223,13 @@ function normalizeStreamValue(value: unknown): RuntimeStreamEvent[] {
   if (typeof value === "string") return [{ type: "delta", text: value }];
   if (!isRecord(value)) return [];
 
+  if (value.type === "interrupt") {
+    return normalizeInterrupts(value.interrupts).map((confirmation) => ({
+      type: "confirmation_required",
+      confirmation,
+    }));
+  }
+
   const event = isRecord(value.event) ? value.event : value;
   const contentBlockDelta = isRecord(event.contentBlockDelta)
     ? event.contentBlockDelta
@@ -250,6 +276,57 @@ function normalizeStreamValue(value: unknown): RuntimeStreamEvent[] {
   }
 
   return result;
+}
+
+function normalizeInterrupts(value: unknown): RuntimeConfirmation[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((candidate) => {
+    if (!isRecord(candidate) || typeof candidate.interrupt_id !== "string") return [];
+    const interruptId = candidate.interrupt_id.trim();
+    if (interruptId.length === 0 || interruptId.length > 200) return [];
+
+    const reason = isRecord(candidate.reason) ? candidate.reason : undefined;
+    const toolName = typeof reason?.tool_name === "string"
+      ? reason.tool_name.trim()
+      : typeof candidate.name === "string"
+        ? candidate.name.trim()
+        : "";
+    if (toolName.length === 0 || toolName.length > 100) return [];
+
+    const operations = Array.isArray(reason?.operations)
+      ? reason.operations.map(sanitizeInterruptOperation).filter(
+        (operation): operation is Record<string, string | number | boolean | null> => operation !== undefined,
+      )
+      : undefined;
+    return [{
+      interruptId,
+      toolName,
+      summary: {
+        ...(operations === undefined ? {} : { operations }),
+      },
+    }];
+  });
+}
+
+function sanitizeInterruptOperation(
+  value: unknown,
+): Record<string, string | number | boolean | null> | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const operation = Object.entries(value).flatMap(([key, fieldValue]) => {
+    if (/(?:token|authorization|cookie|secret|password)/i.test(key)) return [];
+    if (
+      typeof fieldValue === "string"
+      || typeof fieldValue === "number"
+      || typeof fieldValue === "boolean"
+      || fieldValue === null
+    ) {
+      return [[key, fieldValue] as const];
+    }
+    return [];
+  });
+  return operation.length === 0 ? undefined : Object.fromEntries(operation);
 }
 
 function readRuntimeBody(body: unknown): AsyncIterable<Uint8Array> {

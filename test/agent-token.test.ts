@@ -8,6 +8,7 @@ import {
 import {
   AGENT_TOKEN_AUDIENCE,
   AGENT_TOKEN_TTL_SECONDS,
+  AGENT_WRITE_TOKEN_TTL_SECONDS,
   AgentTokenError,
   createAgentAccessToken,
   verifyAgentAccessToken,
@@ -33,6 +34,20 @@ describe("agent access token", () => {
       iat: Math.floor(NOW.getTime() / 1_000),
       exp: Math.floor(NOW.getTime() / 1_000) + AGENT_TOKEN_TTL_SECONDS,
     });
+  });
+
+  it("creates a short-lived read/write approval token", async () => {
+    const token = await createAgentAccessToken(SECRET, {
+      userId: "better-auth-user-1",
+      scopes: ["aircon:read", "aircon:write"],
+      ttlSeconds: AGENT_WRITE_TOKEN_TTL_SECONDS,
+    }, NOW);
+    const claims = await verifyAgentAccessToken(SECRET, token, NOW);
+
+    expect(claims.scope).toEqual(["aircon:read", "aircon:write"]);
+    expect(claims.exp).toBe(
+      Math.floor(NOW.getTime() / 1_000) + AGENT_WRITE_TOKEN_TTL_SECONDS,
+    );
   });
 
   it("rejects expired and incorrectly signed tokens", async () => {

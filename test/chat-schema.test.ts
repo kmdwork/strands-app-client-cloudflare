@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseChatRequest, RequestValidationError } from "../src/schemas/chat";
+import {
+  parseChatRequest,
+  parseResumeChatRequest,
+  RequestValidationError,
+} from "../src/schemas/chat";
 
 describe("parseChatRequest", () => {
   it("accepts a message without a session ID", () => {
@@ -52,5 +56,32 @@ describe("parseChatRequest", () => {
         image: { mediaType: "image/png", data: "not base64" },
       }),
     ).toThrow(RequestValidationError);
+  });
+});
+
+describe("parseResumeChatRequest", () => {
+  const sessionId = "727840a8-0279-4ec5-a169-08fe0e6b8344";
+
+  it("accepts an approval decision for an existing session", () => {
+    expect(parseResumeChatRequest({
+      sessionId,
+      interruptId: " interrupt-1 ",
+      decision: "approve",
+    })).toEqual({
+      sessionId,
+      interruptId: "interrupt-1",
+      decision: "approve",
+    });
+  });
+
+  it("requires a valid session, interrupt ID, and explicit decision", () => {
+    const invalidBodies = [
+      { interruptId: "id", decision: "approve" },
+      { sessionId, interruptId: "", decision: "approve" },
+      { sessionId, interruptId: "id", decision: "later" },
+    ];
+    for (const body of invalidBodies) {
+      expect(() => parseResumeChatRequest(body)).toThrow(RequestValidationError);
+    }
   });
 });

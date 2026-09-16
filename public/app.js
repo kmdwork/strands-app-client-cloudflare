@@ -169,9 +169,13 @@ function appendMessage(role, content, images = []) {
 
 function renderAssistantMessage(article, content) {
   const contentElement = article.querySelector(".message-content");
+  renderAssistantContent(contentElement, content);
+  article.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+function renderAssistantContent(contentElement, content) {
   contentElement.replaceChildren();
   appendAssistantContent(contentElement, content);
-  article.scrollIntoView({ behavior: "smooth", block: "end" });
 }
 
 function appendMessageImage(article, role, image) {
@@ -185,6 +189,11 @@ function appendMessageImage(article, role, image) {
 function appendTypingIndicator() {
   const article = appendMessage("assistant", "");
   const body = article.querySelector(".message-content");
+  body.append(createTypingDots());
+  return article;
+}
+
+function createTypingDots() {
   const dots = document.createElement("div");
   dots.className = "typing-dots";
   dots.setAttribute("aria-label", "回答を生成中");
@@ -193,8 +202,134 @@ function appendTypingIndicator() {
     document.createElement("span"),
     document.createElement("span"),
   );
-  body.append(dots);
-  return article;
+  return dots;
+}
+
+function describeOperation(operation) {
+  if (typeof operation !== "object" || operation === null) {
+    return "変更内容を確認してください。";
+  }
+
+  const type = typeof operation.type === "string" ? operation.type : "update";
+  const name = typeof operation.name === "string" ? `「${operation.name}」` : "";
+  const model = typeof operation.model_number === "string"
+    ? `（${operation.manufacturer ?? ""} ${operation.model_number}）`
+    : "";
+  return `${type.replaceAll("_", " ")}${name}${model}`;
+}
+
+function appendConfirmation(article, confirmation) {
+  const body = article.querySelector(".message-body");
+  const panel = document.createElement("section");
+  panel.className = "confirmation-panel";
+  panel.dataset.interruptId = confirmation.interruptId;
+
+  const title = document.createElement("h3");
+  title.textContent = "以下の変更を実行します";
+  panel.append(title);
+
+  const operations = Array.isArray(confirmation.summary?.operations)
+    ? confirmation.summary.operations
+    : [];
+  if (operations.length > 0) {
+    const list = document.createElement("ul");
+    for (const operation of operations) {
+      const item = document.createElement("li");
+      item.textContent = describeOperation(operation);
+      list.append(item);
+    }
+    panel.append(list);
+  } else {
+    const text = document.createElement("p");
+    text.textContent = "変更内容を確認してから実行してください。";
+    panel.append(text);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "confirmation-actions";
+  const approveButton = document.createElement("button");
+  approveButton.type = "button";
+  approveButton.className = "confirmation-approve";
+  approveButton.textContent = "実行する";
+  const rejectButton = document.createElement("button");
+  rejectButton.type = "button";
+  rejectButton.className = "confirmation-reject";
+  rejectButton.textContent = "キャンセル";
+  actions.append(approveButton, rejectButton);
+  panel.append(actions);
+
+  const choose = (decision) => {
+    if (panel.dataset.submitted === "true") return;
+    panel.dataset.submitted = "true";
+    approveButton.disabled = true;
+    rejectButton.disabled = true;
+    void resumeConfirmation(article, panel, confirmation, decision);
+  };
+  approveButton.addEventListener("click", () => choose("approve"));
+  rejectButton.addEventListener("click", () => choose("reject"));
+
+  body.append(panel);
+  article.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+async function resumeConfirmation(article, panel, confirmation, decision) {
+  if (runtimeSessionId === undefined) {
+    panel.dataset.status = "error";
+    const text = document.createElement("p");
+    text.textContent = "会話情報が見つからないため、変更を実行できませんでした。";
+    panel.append(text);
+    return;
+  }
+
+  panel.dataset.status = "pending";
+  setChatPending(true);
+  const result = document.createElement("div");
+  result.className = "confirmation-result";
+  const dots = createTypingDots();
+  result.append(dots);
+  panel.after(result);
+  let assistantText = "";
+
+  try {
+    await resumeChat({
+      sessionId: runtimeSessionId,
+      interruptId: confirmation.interruptId,
+      decision,
+    }, {
+      session(data) {
+        runtimeSessionId = data.sessionId;
+      },
+      delta(data) {
+        dots.remove();
+        assistantText += data.text;
+        renderAssistantContent(result, assistantText);
+      },
+      image(data) {
+        dots.remove();
+        appendMessageImage(article, "assistant", data);
+      },
+      confirmation_required(data) {
+        dots.remove();
+        appendConfirmation(article, data);
+      },
+      done() {
+        dots.remove();
+      },
+    });
+    panel.dataset.status = decision === "approve" ? "approved" : "rejected";
+  } catch (error) {
+    dots.remove();
+    panel.dataset.status = "error";
+    const text = document.createElement("p");
+    text.textContent = error.status === 401
+      ? "セッションの有効期限が切れました。もう一度ログインしてください。"
+      : "変更を実行できませんでした。内容を確認してから、もう一度お試しください。";
+    result.append(text);
+    if (error.status === 401) showLogin(text.textContent);
+  } finally {
+    setChatPending(false);
+    if (!chatView.hidden) messageInput.focus();
+  }
 }
 
 function resetConversation() {
@@ -314,6 +449,13 @@ chatForm.addEventListener("submit", async (event) => {
       metadata(data) {
         typingIndicator.dataset.metadata = JSON.stringify(data);
       },
+      confirmation_required(data) {
+        removeTypingDots();
+        if (assistantText.length === 0) {
+          renderAssistantMessage(typingIndicator, "変更内容の承認をお待ちしています。");
+        }
+        appendConfirmation(typingIndicator, data);
+      },
       done() {
         removeTypingDots();
       },
@@ -403,4 +545,4 @@ async function initialize() {
 }
 
 initialize();
-import { streamChat } from "./chat-stream.js";
+import { resumeChat, streamChat } from "./chat-stream.js";

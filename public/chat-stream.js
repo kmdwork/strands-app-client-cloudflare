@@ -7,7 +7,15 @@ export class ChatStreamError extends Error {
 }
 
 export async function streamChat(body, handlers = {}, fetchImpl = fetch) {
-  const response = await fetchImpl("/api/chat", {
+  return streamChatRequest("/api/chat", body, handlers, fetchImpl);
+}
+
+export async function resumeChat(body, handlers = {}, fetchImpl = fetch) {
+  return streamChatRequest("/api/chat/resume", body, handlers, fetchImpl);
+}
+
+async function streamChatRequest(path, body, handlers, fetchImpl) {
+  const response = await fetchImpl(path, {
     method: "POST",
     credentials: "include",
     headers: {
